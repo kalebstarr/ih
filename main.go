@@ -12,6 +12,7 @@ import (
 	_ "github.com/charmbracelet/harmonica"
 	_ "github.com/lrstanley/bubblezone"
 	_ "modernc.org/sqlite"
+	_ "github.com/pressly/goose/v3"
 )
 
 type Model struct {
@@ -22,7 +23,7 @@ type Model struct {
 }
 
 func initialModel() (Model, error) {
-	db, err := sql.Open("mysql", "devuser:devpass@tcp(127.0.0.1:3306)/mydb")
+	db, err := sql.Open("sqlite", "devuser:devpass@tcp(127.0.0.1:3306)/mydb")
 	if err != nil {
 		return Model{}, err
 	}

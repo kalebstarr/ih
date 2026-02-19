@@ -8,3 +8,9 @@ devenv.local.yaml
 
 # pre-commit
 .pre-commit-config.yaml
+
+# DB
+*.db
+*.db-wal
+*.db-shm
+*.log
