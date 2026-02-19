@@ -1,31 +1,40 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	_ "github.com/go-sql-driver/mysql"
 )
 
-type model struct {
+type Model struct {
+	db       *sql.DB
 	choices  []string
 	cursor   int
 	selected map[int]struct{}
 }
 
-func initialModel() model {
-	return model{
+func initialModel() (Model, error) {
+	db, err := sql.Open("mysql", "devuser:devpass@tcp(127.0.0.1:3306)/mydb")
+	if err != nil {
+		return Model{}, err
+	}
+
+	return Model{
+		db:       db,
 		choices:  []string{"Buy carrots", "Buy celery", "Buy kohlrabi"},
 		selected: make(map[int]struct{}),
-	}
+	}, nil
 }
 
-func (m model) Init() tea.Cmd {
+func (m Model) Init() tea.Cmd {
 	return nil
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -51,7 +60,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) View() string {
+func (m Model) View() string {
 	var b strings.Builder
 
 	b.WriteString("What should we buy at the market?\n\n")
@@ -75,7 +84,14 @@ func (m model) View() string {
 }
 
 func main() {
-	p := tea.NewProgram(initialModel())
+	init_model, err := initialModel()
+	if err != nil {
+		fmt.Printf("Failed to initialize: %v", err)
+		os.Exit(1)
+	}
+	defer init_model.db.Close()
+
+	p := tea.NewProgram(init_model)
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
