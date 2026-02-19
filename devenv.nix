@@ -3,7 +3,6 @@
 {
 
   languages = {
-    zig.enable = true;
   };
 
   services.mysql = {
