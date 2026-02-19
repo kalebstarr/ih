@@ -7,7 +7,11 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/charmbracelet/bubbles"
+	_ "github.com/charmbracelet/lipgloss"
+	_ "github.com/charmbracelet/harmonica"
+	_ "github.com/lrstanley/bubblezone"
+	_ "modernc.org/sqlite"
 )
 
 type Model struct {
