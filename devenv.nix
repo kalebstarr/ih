@@ -3,6 +3,7 @@
 {
 
   languages = {
+    go.enable = true;
   };
 
   services.mysql = {
