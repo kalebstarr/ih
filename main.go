@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
 
 	_ "github.com/charmbracelet/bubbles"
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,23 +24,16 @@ import (
 )
 
 type Model struct {
-	db       *sql.DB
 	choices  []string
 	cursor   int
 	selected map[int]struct{}
 }
 
-func initialModel() (Model, error) {
-	db, err := sql.Open("sqlite", "devuser:devpass@tcp(127.0.0.1:3306)/mydb")
-	if err != nil {
-		return Model{}, err
-	}
-
+func initialModel() Model {
 	return Model{
-		db:       db,
 		choices:  []string{"Buy carrots", "Buy celery", "Buy kohlrabi"},
 		selected: make(map[int]struct{}),
-	}, nil
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -154,14 +151,54 @@ func main() {
 		logPath,
 	)
 
-	init_model, err := initialModel()
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		fmt.Printf("Failed to initialize: %v", err)
+		slog.Error("open db failed", "err", err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	defer init_model.db.Close()
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	pragmas := []string{
+		"PRAGMA foreign_keys = ON;",
+		"PRAGMA journal_mode = WAL;",
+		"PRAGMA busy_timeout = 5000;",
+		"PRAGMA synchronous = NORMAL;",
+	}
+	for _, p := range pragmas {
+		if _, err := db.ExecContext(ctx, p); err != nil {
+			_ = db.Close()
 
-	p := tea.NewProgram(init_model)
+			slog.Error("apply pragmas failed", "err", err)
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		_ = db.Close()
+
+		slog.Error("ping db failed", "err", err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	p := tea.NewProgram(initialModel())
+
+	go func() {
+		<-ctx.Done()
+		slog.Info("signal received, quitting TUI")
+		p.Quit()
+	}()
+
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
