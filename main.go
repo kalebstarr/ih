@@ -11,7 +11,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
@@ -21,61 +20,64 @@ import (
 	_ "github.com/charmbracelet/lipgloss"
 	_ "github.com/lrstanley/bubblezone"
 	"github.com/pressly/goose/v3"
-	_ "github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 )
 
-type Model struct {
-	ctx context.Context
-
-	db *sql.DB
-
-	dbPath  string
-	logPath string
-
-	err error
+func setupLogger(logPath string) (*os.File, error) {
+	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	handler := slog.NewTextHandler(file, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})
+	slog.SetDefault(slog.New(handler))
+	return file, nil
 }
 
-func (m Model) Init() tea.Cmd {
-	return nil
-}
-
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
+func setupDB(ctx context.Context, dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	pragmas := []string{
+		"PRAGMA foreign_keys = ON;",
+		"PRAGMA journal_mode = WAL;",
+		"PRAGMA busy_timeout = 5000;",
+		"PRAGMA synchronous = NORMAL;",
+	}
+	for _, p := range pragmas {
+		if _, err := db.ExecContext(ctx, p); err != nil {
+			_ = db.Close()
+			return nil, err
 		}
 	}
-	return m, nil
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
 }
 
-func (m Model) View() string {
-	var b strings.Builder
-
-	b.WriteString("What should we buy at the market?\n\n")
-
-	b.WriteString("\nPress q to quit.\n")
-	return b.String()
+func runMigrations(ctx context.Context, db *sql.DB) error {
+	goose.SetBaseFS(migrations.FS)
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		return err
+	}
+	migCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return goose.UpContext(migCtx, db, ".")
 }
 
 func main() {
 	var dbPathFlag string
 	var logPathFlag string
 
-	flag.StringVar(
-		&dbPathFlag,
-		"db",
-		"",
-		"Path to sqlite db file (default: OS config dir)",
-	)
-	flag.StringVar(
-		&logPathFlag,
-		"log",
-		"",
-		"Path to log file (default: OS config dir)",
-	)
+	flag.StringVar(&dbPathFlag, "db", "", "Path to sqlite db file (default: OS config dir)")
+	flag.StringVar(&logPathFlag, "log", "", "Path to log file (default: OS config dir)")
 	flag.Parse()
 
 	appName := "ih"
@@ -99,79 +101,33 @@ func main() {
 		logPath = filepath.Join(appDir, "app.log")
 	}
 
-	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	logFile, err := setupLogger(logPath)
 	if err != nil {
-		fmt.Printf("Failed to open config file: %v", err)
+		fmt.Printf("Failed to open log file: %v", err)
 		os.Exit(1)
 	}
-	defer file.Close()
-	handler := slog.NewTextHandler(file, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})
-	slog.SetDefault(slog.New(handler))
+	defer logFile.Close()
 
-	slog.Info(
-		"starting",
-		"os",
-		runtime.GOOS,
-		"arch",
-		runtime.GOARCH,
-		"db",
-		dbPath,
-		"log",
-		logPath,
+	slog.Info("starting",
+		"os", runtime.GOOS,
+		"arch", runtime.GOARCH,
+		"db", dbPath,
+		"log", logPath,
 	)
 
-	ctx, stop := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := setupDB(ctx, dbPath)
 	if err != nil {
-		slog.Error("open db failed", "err", err)
+		slog.Error("setup db failed", "err", err)
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
-	pragmas := []string{
-		"PRAGMA foreign_keys = ON;",
-		"PRAGMA journal_mode = WAL;",
-		"PRAGMA busy_timeout = 5000;",
-		"PRAGMA synchronous = NORMAL;",
-	}
-	for _, p := range pragmas {
-		if _, err := db.ExecContext(ctx, p); err != nil {
-			_ = db.Close()
 
-			slog.Error("apply pragmas failed", "err", err)
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
-	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	if err := db.PingContext(pingCtx); err != nil {
-		_ = db.Close()
-
-		slog.Error("ping db failed", "err", err)
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	goose.SetBaseFS(migrations.FS)
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		slog.Error("set sql dialect failed", "err", err)
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	migCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if err := goose.UpContext(migCtx, db, "."); err != nil {
-		slog.Error("migrations failed failed", "err", err)
+	if err := runMigrations(ctx, db); err != nil {
+		slog.Error("migrations failed", "err", err)
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
