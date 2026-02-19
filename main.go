@@ -2,17 +2,21 @@ package main
 
 import (
 	"database/sql"
+	"flag"
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	_ "github.com/charmbracelet/bubbles"
-	_ "github.com/charmbracelet/lipgloss"
+	tea "github.com/charmbracelet/bubbletea"
 	_ "github.com/charmbracelet/harmonica"
+	_ "github.com/charmbracelet/lipgloss"
 	_ "github.com/lrstanley/bubblezone"
-	_ "modernc.org/sqlite"
 	_ "github.com/pressly/goose/v3"
+	_ "modernc.org/sqlite"
 )
 
 type Model struct {
@@ -89,6 +93,67 @@ func (m Model) View() string {
 }
 
 func main() {
+	var dbPathFlag string
+	var logPathFlag string
+
+	flag.StringVar(
+		&dbPathFlag,
+		"db",
+		"",
+		"Path to sqlite db file (default: OS config dir)",
+	)
+	flag.StringVar(
+		&logPathFlag,
+		"log",
+		"",
+		"Path to log file (default: OS config dir)",
+	)
+	flag.Parse()
+
+	appName := "ih"
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		fmt.Printf("Failed to determine config directory: %v", err)
+		os.Exit(1)
+	}
+	appDir := filepath.Join(configDir, appName)
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		fmt.Printf("Failed to create config dir: %v", err)
+		os.Exit(1)
+	}
+
+	dbPath := dbPathFlag
+	if dbPath == "" {
+		dbPath = filepath.Join(appDir, "app.db")
+	}
+	logPath := logPathFlag
+	if logPath == "" {
+		logPath = filepath.Join(appDir, "app.log")
+	}
+
+	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Printf("Failed to open config file: %v", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+	handler := slog.NewTextHandler(file, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})
+	slog.SetDefault(slog.New(handler))
+
+	slog.Info(
+		"starting",
+		"os",
+		runtime.GOOS,
+		"arch",
+		runtime.GOARCH,
+		"db",
+		dbPath,
+		"log",
+		logPath,
+	)
+
 	init_model, err := initialModel()
 	if err != nil {
 		fmt.Printf("Failed to initialize: %v", err)
