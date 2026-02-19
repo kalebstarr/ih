@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"ih/migrations"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -19,21 +20,20 @@ import (
 	_ "github.com/charmbracelet/harmonica"
 	_ "github.com/charmbracelet/lipgloss"
 	_ "github.com/lrstanley/bubblezone"
+	"github.com/pressly/goose/v3"
 	_ "github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 )
 
 type Model struct {
-	choices  []string
-	cursor   int
-	selected map[int]struct{}
-}
+	ctx context.Context
 
-func initialModel() Model {
-	return Model{
-		choices:  []string{"Buy carrots", "Buy celery", "Buy kohlrabi"},
-		selected: make(map[int]struct{}),
-	}
+	db *sql.DB
+
+	dbPath  string
+	logPath string
+
+	err error
 }
 
 func (m Model) Init() tea.Cmd {
@@ -191,7 +191,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	p := tea.NewProgram(initialModel())
+	goose.SetBaseFS(migrations.FS)
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		slog.Error("set sql dialect failed", "err", err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	migCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := goose.UpContext(migCtx, db, "."); err != nil {
+		slog.Error("migrations failed failed", "err", err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	m := Model{
+		ctx:     ctx,
+		db:      db,
+		dbPath:  dbPath,
+		logPath: logPath,
+	}
+
+	p := tea.NewProgram(m)
 
 	go func() {
 		<-ctx.Done()
