@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/charmbracelet/bubbles"
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	_ "github.com/charmbracelet/harmonica"
 	_ "github.com/charmbracelet/lipgloss"
@@ -133,13 +133,14 @@ func main() {
 	}
 
 	m := Model{
-		ctx:     ctx,
-		db:      db,
-		dbPath:  dbPath,
-		logPath: logPath,
+		ctx:      ctx,
+		db:       db,
+		dbPath:   dbPath,
+		logPath:  logPath,
+		list: list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
 	}
 
-	p := tea.NewProgram(m)
+	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	go func() {
 		<-ctx.Done()

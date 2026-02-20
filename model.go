@@ -3,9 +3,14 @@ package main
 import (
 	"context"
 	"database/sql"
-	"strings"
 
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+var (
+	appStyle = lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder(), true, false)
 )
 
 type Model struct {
@@ -16,7 +21,8 @@ type Model struct {
 	dbPath  string
 	logPath string
 
-	err error
+	list list.Model
+	err  error
 }
 
 func (m Model) Init() tea.Cmd {
@@ -24,21 +30,27 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		h, v := appStyle.GetFrameSize()
+		m.list.SetSize(msg.Width-h, msg.Height-v)
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		}
 	}
-	return m, nil
+
+	newListModel, cmd := m.list.Update(msg)
+	m.list = newListModel
+	cmds = append(cmds, cmd)
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) View() string {
-	var b strings.Builder
-
-	b.WriteString("What should we buy at the market?\n\n")
-
-	b.WriteString("\nPress q to quit.\n")
-	return b.String()
+	return appStyle.Render(m.list.View())
 }
